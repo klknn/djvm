@@ -1,0 +1,9 @@
+{
+	"authors": [
+		"Shigeki Karita"
+	],
+	"copyright": "Copyright © 2020, Shigeki Karita",
+	"description": "A minimal D application.",
+	"license": "proprietary",
+	"name": "djvm"
+}

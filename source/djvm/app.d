@@ -5,41 +5,50 @@ import core.stdc.stdio : fopen, fread, printf, FILE;
 
 import djvm.logging : error, info;
 
-// @nogc nothrow:
+@nogc nothrow:
+
+/// Table 4.4-A. Constant pool tags (by section)
+/// https://docs.oracle.com/javase/specs/jvms/se14/html/jvms-4.html
+enum Tag
+{
+  // literals
+  Utf8 = 0x01,
+  Integer = 0x03,
+  Float = 0x04,
+  Long = 0x05,
+  Double = 0x06,
+
+  Class = 0x07,
+  String = 0x08,
+  Fieldref = 0x09,
+  Methodref = 0x0a,
+  InterfaceMethodref = 0x11,
+  NameAndType = 0x0c,
+
+  // from Java 7 (51.0)
+  MethodHandle = 0x0f,
+  MethodType = 0x10,
+  InvokeDynamic = 0x12,
+
+  // from Java 9 (53.0)
+  Module = 0x13,
+  Package = 0x14,
+
+  // from Java 11 (55.0)
+  Dynamic = 0x11,
+}
+
+auto enumToString(T)(T t)
+{
+  static foreach (mem; __traits(allMembers, T))
+  {
+    if (t == __traits(getMember, T, mem)) return mem;
+  }
+  assert(false);
+}
 
 struct Const
 {  
-  /// Table 4.4-A. Constant pool tags (by section)
-  /// https://docs.oracle.com/javase/specs/jvms/se14/html/jvms-4.html
-  enum Tag
-  {
-    // literals
-    Utf8 = 0x01,
-    Integer = 0x03,
-    Float = 0x04,
-    Long = 0x05,
-    Double = 0x06,
-
-    Class = 0x07,
-    String = 0x08,
-    Fieldref = 0x09,
-    Methodref = 0x0a,
-    InterfaceMethodref = 0x11,
-    NameAndType = 0x0c,
-
-    // from Java 7 (51.0)
-    MethodHandle = 0x0f,
-    MethodType = 0x10,
-    InvokeDynamic = 0x12,
-
-    // from Java 9 (53.0)
-    Module = 0x13,
-    Package = 0x14,
-
-    // from Java 11 (55.0)
-    Dynamic = 0x11,
-  }
-
   Tag tag;
 
   // TODO: use union
@@ -49,10 +58,9 @@ struct Const
 
 string utf8(const ref Const c)
 {
-  if (c.tag != Const.Tag.Utf8)
+  if (c.tag != Tag.Utf8)
   {
-    info("wrong tag %#x (expected Utf8)", c.tag);
-    return "";
+    error("wrong tag %#x (expected Utf8)", c.tag);
   }
   return c.str;
 }
@@ -63,8 +71,8 @@ ref read(return ref Const c, scope FILE* fd)
   import core.stdc.stdlib : malloc;
 
   c = Const.init;
-  c.tag = cast(Const.Tag) fd.read!ubyte;
-  with (Const.Tag)
+  c.tag = cast(Tag) fd.read!ubyte;
+  with (Tag)
   {
     // TODO: final switch
     switch (c.tag)
@@ -105,14 +113,15 @@ ref read(return ref Const[] cs, scope FILE* fd)
 {
   import core.stdc.stdlib : realloc;
   
-  auto count = fd.read!ushort - 1;
+  auto count = fd.read!ushort;
   info("const pool count: %d", count);
 
   auto p = cast(Const*) realloc(cs.ptr, Const.sizeof * count);
   if (p is null) error("realloc failed.");
 
   cs = p[0 .. count];
-  foreach (i; 0 .. count)
+  cs[0] = Const.init;  // TODO: is this unused?
+  foreach (i; 1 .. count)
   {
     cs[i].read(fd);
   }
@@ -155,7 +164,7 @@ struct Class
     foreach (ref a; as)
     {
       a = Attribute.init;
-      a.name = this.constPool[fd.read!ushort - 1].utf8;
+      a.name = this.constPool[fd.read!ushort].utf8;
       info("attribute name: %s", a.name.ptr);
       // FIXME: really uint?
       auto dn = fd.read!uint;
@@ -181,9 +190,9 @@ struct Class
     {
       f = Field.init;
       f.flags = fd.read!ushort;
-      f.name = this.constPool[fd.read!ushort - 1].utf8;
+      f.name = this.constPool[fd.read!ushort].utf8;
       info("field/method name: %s", f.name.ptr);
-      f.descriptor = this.constPool[fd.read!ushort - 1].utf8;
+      f.descriptor = this.constPool[fd.read!ushort].utf8;
       info("field/method descriptor: %s", f.descriptor.ptr);
       read(f.attributes, fd);
     }
@@ -192,7 +201,7 @@ struct Class
 
   ref read(scope FILE* fd)
   {
-    import core.stdc.stdlib : malloc;
+    import core.stdc.stdlib : realloc;
   
     // Check the first 4 numbers.
     ubyte[4] magic;
@@ -208,17 +217,16 @@ struct Class
     // Read fields.
     this.constPool.read(fd);  
     this.flags = fd.read!ushort;
-    // FIXME: Is "- 1" needed?
-    this.thisClass = this.constPool[fd.read!ushort - 1];
-    this.superClass = this.constPool[fd.read!ushort - 1];
+    this.thisClass = this.constPool[fd.read!ushort];
+    this.superClass = this.constPool[fd.read!ushort];
 
     // Read interfaces
     auto ilen = fd.read!ushort;
     info("interface count: %d", ilen);
-    auto iptr = cast(string*) malloc(string.sizeof * ilen);
+    auto iptr = cast(string*) realloc(this.interfaces.ptr, string.sizeof * ilen);
     foreach (i; 0 .. ilen)
     {
-      iptr[i] = this.constPool[fd.read!ushort - 1].utf8;
+      iptr[i] = this.constPool[fd.read!ushort].utf8;
       info("interface: %s", iptr[i].ptr);
     }
     this.interfaces = iptr[0 .. ilen];
@@ -268,9 +276,11 @@ int main(string[] args)
 
   Class c;
   c.read(fd);
+
+  info("=== const pool ===");
   foreach (i, v; c.constPool)
   {
-    writeln(i, v);
+    info("[%03d] tag: %s,\tstr: \"%s\"", i, v.tag.enumToString.ptr, v.str.ptr);
   }
   return 0;
 }

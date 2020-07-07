@@ -16,6 +16,22 @@ void info(
   stderr.fprintf("\n");
 }
 
+/// Reports the warning.
+@trusted
+void warn(
+    size_t line = __LINE__,
+    string modu = __MODULE__,
+    Args...)
+    (const(char)* fmt, Args args)
+{
+  import core.stdc.stdio : stderr, fprintf;
+  import core.stdc.stdlib : exit;
+
+  stderr.fprintf("[WARN %s:%d] ", &modu[0], line);
+  stderr.fprintf(fmt, args);
+  stderr.fprintf("\n");
+}
+
 /// Reports the error.
 @trusted
 void error(
